@@ -36,6 +36,24 @@ from scheduler import Scheduler
 from middleware import setup_middleware
 from utils.helpers import load_languages
 
+
+def add_telegram_message_fallback(bot: TeleBot):
+    """Retry messages without formatting when Telegram rejects Markdown."""
+    original_send_message = bot.send_message
+
+    def send_message_with_fallback(*args, **kwargs):
+        try:
+            return original_send_message(*args, **kwargs)
+        except Exception as error:
+            if kwargs.get('parse_mode') and "can't parse entities" in str(error).lower():
+                fallback_kwargs = dict(kwargs)
+                fallback_kwargs.pop('parse_mode', None)
+                return original_send_message(*args, **fallback_kwargs)
+            raise
+
+    bot.send_message = send_message_with_fallback
+    return bot
+
 # የስህተት አያያዝ ክፍል
 def setup_error_handlers():
     """አለምአቀፍ የስህተት አያያዝ ማዋቀር"""
@@ -87,7 +105,7 @@ def setup_bot_commands(bot: TeleBot):
         bot.set_my_commands(commands, scope=BotCommandScopeDefault())
         logger.info("✅ የቦት ትዕዛዞች ተመዝግበዋል")
     except Exception as e:
-        logger.error(f"❌ ትዕዛዞችን መመዝገብ አልተቻለም: {e}")
+        logger.warning(f"⚠️ ትዕዛዞችን መመዝገብ አልተቻለም; ቦቱ ግን ይቀጥላል: {e}")
 
 # የቦት መጀመሪያ
 def main():
@@ -134,7 +152,7 @@ def main():
     
     # ቦት መፍጠር
     try:
-        bot = TeleBot(config.BOT_TOKEN, parse_mode='HTML')
+        bot = add_telegram_message_fallback(TeleBot(config.bot.TOKEN))
         logger.info("✅ ቦት ተፈጥሯል")
     except Exception as e:
         logger.error(f"❌ ቦት መፍጠር አልተቻለም: {e}")
@@ -171,34 +189,37 @@ def main():
     logger.info(f"🤖 ዘናጭ ቦት እየሰራ ነው...")
     logger.info(f"📱 የቦት ስም: {bot.get_me().first_name}")
     logger.info(f"🆔 የቦት ID: {bot.get_me().id}")
-    logger.info(f"🗄️ የውሂብ ጎታ: {config.DB_PATH}")
+    logger.info("🗄️ የውሂብ ጎታ: PostgreSQL")
     logger.info(f"⏰ ጊዜ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 60)
     
     # ቦቱን ማስነሳት
     try:
         # ማልቲ-ስራ ሂደት (webhook vs polling)
-        if config.USE_WEBHOOK:
+        if config.bot.USE_WEBHOOK:
             # ዌብሁክ ሞድ
-            webhook_url = f"{config.WEBHOOK_URL}/{config.WEBHOOK_PATH}"
+            webhook_url = f"{config.bot.WEBHOOK_URL}{config.bot.WEBHOOK_PATH}"
             bot.remove_webhook()
             bot.set_webhook(
                 url=webhook_url,
-                certificate=open(config.WEBHOOK_CERT, 'rb') if config.WEBHOOK_CERT else None,
+                certificate=open(config.bot.WEBHOOK_CERT, 'rb') if config.bot.WEBHOOK_CERT else None,
                 max_connections=100
             )
             logger.info(f"✅ ዌብሁክ ተዘጋጅቷል: {webhook_url}")
             
             # ፍላስክ ሰርቨር ማስጀመር
             from webhook import app
-            app.run(host='0.0.0.0', port=config.WEBHOOK_PORT)
+            app.run(host='0.0.0.0', port=config.bot.WEBHOOK_PORT)
         else:
             # ፖሊንግ ሞድ
             logger.info("🔄 ቦቱ በፖሊንግ ሞድ እየሰራ ነው...")
             bot.infinity_polling(
                 timeout=60,
                 long_polling_timeout=30,
-                allowed_updates=['message', 'callback_query', 'inline_query']
+                allowed_updates=['message', 'callback_query', 'inline_query', 'chosen_inline_result'],
+                none_stop=True,
+                skip_pending=True,
+                interval=0,
             )
     except KeyboardInterrupt:
         logger.info("🛑 ቦቱ በእጅ ተቋርጧል")
@@ -224,7 +245,7 @@ def start_webhook():
     config = Config()
     
     # ዌብሁክ መዝገብ
-    webhook_url = f"{config.WEBHOOK_URL}/{config.WEBHOOK_PATH}"
+    webhook_url = f"{config.bot.WEBHOOK_URL}{config.bot.WEBHOOK_PATH}"
     bot.remove_webhook()
     bot.set_webhook(
         url=webhook_url,
@@ -234,7 +255,7 @@ def start_webhook():
     logger.info(f"✅ ዌብሁክ ተዘጋጅቷል: {webhook_url}")
     
     # ሰርቨር ማስጀመር
-    app.run(host='0.0.0.0', port=config.WEBHOOK_PORT)
+    app.run(host='0.0.0.0', port=config.bot.WEBHOOK_PORT)
 
 if __name__ == '__main__':
     # የስራ ሁነታ መምረጥ

@@ -1,0 +1,22 @@
+[project]
+name = "zenach-bot"
+version = "0.1.0"
+description = "Telegram commerce bot for product orders and admin management"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+	"pyTelegramBotAPI",
+	"Flask",
+	"python-dotenv",
+	"requests",
+	"pytz",
+	"psycopg2-binary",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

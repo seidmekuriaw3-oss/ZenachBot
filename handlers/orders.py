@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pyright: reportOptionalMemberAccess=false, reportArgumentType=false, reportOptionalSubscript=false, reportAttributeAccessIssue=false
 
 """
 ዘናጭ ቦት - የትዕዛዝ እጅ አያያዝ
@@ -25,6 +26,18 @@ logger = logging.getLogger(__name__)
 
 # ለትዕዛዝ ጊዜያዊ መረጃ
 order_states = {}
+
+show_cart = None
+process_discount_code = None
+handle_checkout = None
+handle_payment = None
+show_user_orders = None
+
+show_cart = None
+process_discount_code = None
+handle_checkout = None
+handle_payment = None
+show_user_orders = None
 
 
 def register(bot: TeleBot, db: Database):
@@ -88,6 +101,8 @@ def register(bot: TeleBot, db: Database):
             reply_markup=markup,
             parse_mode='Markdown'
         )
+
+    globals()['show_cart'] = show_cart
     
     # ==================== ጋሪ ማጽዳት ====================
     
@@ -197,6 +212,8 @@ def register(bot: TeleBot, db: Database):
         
         # ጋሪ ማሳየት
         show_cart(message, db, bot)
+
+    globals()['process_discount_code'] = process_discount_code
     
     # ==================== ግዢ ማረጋገጥ ====================
     
@@ -370,6 +387,9 @@ def register(bot: TeleBot, db: Database):
         # ሁኔታን ማጽዳት
         order_states.pop(user_id, None)
         bot.answer_callback_query(call.id)
+
+    globals()['handle_checkout'] = handle_checkout
+    globals()['handle_payment'] = handle_payment
     
     # ==================== ትዕዛዞቼ ====================
     
@@ -427,6 +447,8 @@ def register(bot: TeleBot, db: Database):
             reply_markup=markup,
             parse_mode='Markdown'
         )
+
+    globals()['show_user_orders'] = show_user_orders
     
     # ==================== የትዕዛዝ ዝርዝር ====================
     

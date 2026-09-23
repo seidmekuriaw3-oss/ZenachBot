@@ -39,6 +39,7 @@ class BotConfig:
     USE_WEBHOOK: bool = os.getenv('USE_WEBHOOK', 'False').lower() == 'true'
     WEBHOOK_URL: str = os.getenv('WEBHOOK_URL', 'https://example.com')
     WEBHOOK_PATH: str = os.getenv('WEBHOOK_PATH', '/webhook')
+    WEBHOOK_SECRET: Optional[str] = os.getenv('WEBHOOK_SECRET')
     WEBHOOK_PORT: int = int(os.getenv('WEBHOOK_PORT', 8443))
     WEBHOOK_CERT: Optional[str] = os.getenv('WEBHOOK_CERT')
     WEBHOOK_KEY: Optional[str] = os.getenv('WEBHOOK_KEY')
@@ -61,15 +62,18 @@ class BotConfig:
             raise ValueError("❌ BOT_TOKEN አልተገኘም!")
         if not self.ADMIN_IDS:
             raise ValueError("❌ ADMIN_IDS አልተገኘም!")
+        if os.getenv('ENVIRONMENT', 'development').lower() == 'production' and self.SECRET_KEY == 'your-secret-key-change-this':
+            raise ValueError("❌ SECRET_KEY መቀየር አለበት!")
+        if self.USE_WEBHOOK and self.WEBHOOK_URL == 'https://example.com':
+            raise ValueError("❌ WEBHOOK_URL መዘጋጀት አለበት!")
         return True
 
 
 @dataclass
 class DatabaseConfig:
     """የውሂብ ጎታ ውቅር"""
-    
-    # SQLite
-    DB_PATH: str = os.getenv('DB_PATH', 'data/zenach.db')
+
+    DB_URL: str = os.getenv('DATABASE_URL', '')
     DB_POOL_SIZE: int = int(os.getenv('DB_POOL_SIZE', 10))
     DB_TIMEOUT: int = int(os.getenv('DB_TIMEOUT', 30))
     
@@ -79,9 +83,9 @@ class DatabaseConfig:
     BACKUP_RETENTION_DAYS: int = int(os.getenv('BACKUP_RETENTION_DAYS', 30))
     
     def validate(self) -> bool:
-        """የውሂብ ጎታ ማውጫ መኖሩን ማረጋገጥ"""
-        db_dir = Path(self.DB_PATH).parent
-        db_dir.mkdir(parents=True, exist_ok=True)
+        """የPostgreSQL ግንኙነት መኖሩን ማረጋገጥ"""
+        if not self.DB_URL.startswith(('postgresql://', 'postgres://')):
+            raise ValueError('❌ DATABASE_URL የPostgreSQL URL መሆን አለበት!')
         return True
 
 
@@ -272,7 +276,7 @@ class Config:
                 'admins': len(self.bot.ADMIN_IDS)
             },
             'database': {
-                'path': self.database.DB_PATH,
+                'backend': 'postgresql',
                 'pool_size': self.database.DB_POOL_SIZE
             },
             'payment': {
@@ -324,7 +328,7 @@ if __name__ == '__main__':
     
     print(f"\n🤖 የቦት ስም: {config.bot.BOT_NAME}")
     print(f"👥 አስተዳዳሪዎች: {len(config.bot.ADMIN_IDS)}")
-    print(f"🗄️ ውሂብ ጎታ: {config.database.DB_PATH}")
+    print("🗄️ ውሂብ ጎታ: PostgreSQL")
     print(f"💳 ክፍያ: {config.payment.CURRENCY}")
     print(f"🌍 ቋንቋዎች: {', '.join(config.language.LANGUAGES)}")
     print(f"🛡️ ደህንነት: {'✅ ንቁ' if config.security.RATE_LIMIT_ENABLED else '❌ ያልነቃ'}")

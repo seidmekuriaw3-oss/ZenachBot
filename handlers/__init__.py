@@ -16,12 +16,105 @@ from telebot.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from database import Database
 from utils.helpers import get_text, get_user_lang
 from keyboards.reply import get_main_menu, get_admin_menu
-from handlers.products import show_products_by_category
-from handlers.user import show_user_profile
-from handlers.orders import show_user_orders, show_cart
-from services.notifications import toggle_subscription
+from utils.helpers import format_currency
 
 logger = logging.getLogger(__name__)
+
+
+def toggle_subscription(message: Message, db: Database, bot: TeleBot, subscribe: bool):
+    """Update notification subscription from the reply keyboard."""
+    user_id = message.from_user.id
+    status = 1 if subscribe else 0
+    db.update_user(user_id, is_subscribed=status)
+    db.log_activity(user_id, 'toggle_subscription', f'አዲስ ሁኔታ: {status}')
+    lang = get_user_lang(db, user_id)
+    key = 'subscribed' if subscribe else 'unsubscribed'
+    bot.send_message(
+        message.chat.id,
+        f"✅ {get_text(lang, 'subscription')}: {get_text(lang, key)}"
+    )
+
+
+def show_products_by_category(message: Message, category: str, db: Database, bot: TeleBot):
+    """Display products selected from the reply keyboard."""
+    lang = get_user_lang(db, message.from_user.id)
+    products = db.get_products(category=category, limit=20, offset=0)
+    if not products:
+        bot.send_message(message.chat.id, get_text(lang, 'no_products_in_category'))
+        return []
+
+    lines = [f"📦 {get_text(lang, category.lower())}", '']
+    for product in products[:10]:
+        name = product.get('name_am') if lang == 'am' else product.get('name_en')
+        lines.append(f"• {name or product.get('name_am', 'N/A')} - {format_currency(product.get('price', 0))}")
+        lines.append(f"  /product {product['id']}")
+    bot.send_message(message.chat.id, '\n'.join(lines))
+    return products
+
+
+def show_user_orders(message: Message, db: Database, bot: TeleBot):
+    """Display the current user's recent orders."""
+    orders = db.get_user_orders(message.from_user.id, limit=10)
+    if not orders:
+        bot.send_message(message.chat.id, "📋 እስካሁን ትዕዛዝ የለዎትም።")
+        return []
+    text = '\n'.join(
+        f"• {order.get('order_number', order.get('id', 'N/A'))} - {order.get('status', 'N/A')} - {format_currency(order.get('final_amount', 0))}"
+        for order in orders
+    )
+    bot.send_message(message.chat.id, f"📋 ትዕዛዞቼ\n\n{text}")
+    return orders
+
+
+def show_cart(message: Message, db: Database, bot: TeleBot):
+    """Display the current user's cart."""
+    cart = db.get_cart(message.from_user.id)
+    items = cart.get('items', []) if cart else []
+    if not items:
+        bot.send_message(message.chat.id, "🛒 ጋሪዎ ባዶ ነው።")
+        return []
+    text = '\n'.join(
+        f"• {item.get('name', 'N/A')} x{item.get('quantity', 0)} - {format_currency(item.get('price', 0))}"
+        for item in items
+    )
+    bot.send_message(message.chat.id, f"🛒 ጋሪ\n\n{text}")
+    return items
+
+
+def show_user_profile(message: Message, db: Database, bot: TeleBot):
+    """Display a compact user profile."""
+    user = db.get_user(message.from_user.id)
+    if not user:
+        bot.send_message(message.chat.id, "👤 መገለጫዎ አልተገኘም።")
+        return None
+    text = (
+        f"👤 መገለጫ\n\n"
+        f"📝 ስም: {user.get('first_name', '')} {user.get('last_name', '')}\n"
+        f"🔹 Username: @{user.get('username') or 'N/A'}\n"
+        f"📱 ስልክ: {user.get('phone') or 'N/A'}"
+    )
+    bot.send_message(message.chat.id, text)
+    return user
+
+
+def show_admin_panel(message: Message, db: Database, bot: TeleBot):
+    """Display the admin keyboard for an admin user."""
+    from config import config
+    if message.from_user.id not in config.bot.ADMIN_IDS:
+        bot.send_message(message.chat.id, "⛔ ይህን ክፍል ለመጠቀም ፈቃድ የለዎትም።")
+        return False
+    bot.send_message(message.chat.id, "⚙️ የአስተዳዳሪ ፓነል", reply_markup=get_admin_menu(message.from_user.id, get_user_lang(db, message.from_user.id)))
+    return True
+
+
+def register_handlers(bot: TeleBot, db: Database):
+    """Package-level API expected by main.py."""
+    from handlers import start, products, orders, payments, user, admin, callback
+
+    # Register specific handlers before messages.py's catch-all text handler.
+    for module in (start, products, orders, payments, user, admin, callback):
+        module.register(bot, db)
+    register(bot, db)
 
 
 def register(bot: TeleBot, db: Database):
@@ -35,10 +128,28 @@ def register(bot: TeleBot, db: Database):
         user_id = message.from_user.id
         text = message.text
         lang = get_user_lang(db, user_id)
-        
+
+        if not db.get_user(user_id):
+            db.create_user(
+                user_id=user_id,
+                username=message.from_user.username,
+                first_name=message.from_user.first_name,
+                last_name=message.from_user.last_name,
+                lang='am'
+            )
+
+        # ለአስተዳዳሪ የምርት መጨመር ተራ እውቅና ያለው ግብዓት በእውነተኛ ሂደት እንዲተካ ይደረጋል
+        try:
+            from handlers.admin import admin_states, route_admin_product_step
+            if user_id in admin_states and admin_states[user_id].get('action') == 'add_product':
+                if route_admin_product_step(message, db, bot):
+                    return
+        except Exception:
+            pass
+
         # የተጠቃሚ እንቅስቃሴ መመዝገብ
         db.log_activity(user_id, 'message', f'ተጠቃሚ: {text[:50]}')
-        
+
         # የአስተዳዳሪ ሜኑ
         if text in ['⚙️ አስተዳደር', '⚙️ Admin', 'አስተዳደር ⚙️', 'Admin ⚙️']:
             from handlers.admin import show_admin_panel

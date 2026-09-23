@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Optional
 
 from telebot import TeleBot
-from telebot.types import Message, CallbackQuery, Error
+from telebot.types import Message, CallbackQuery
 
 from database import Database
 from config import config
@@ -303,7 +303,7 @@ def format_error_for_user(error: Exception, lang: str = 'am') -> str:
     # የስህተት አይነት መለየት
     error_str = str(error).lower()
     
-    if 'database' in error_str or 'sqlite' in error_str:
+    if 'database' in error_str or 'postgres' in error_str:
         error_type = 'database'
     elif 'network' in error_str or 'timeout' in error_str:
         error_type = 'network'

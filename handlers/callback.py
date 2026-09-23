@@ -179,7 +179,7 @@ def register(bot: TeleBot, db: Database):
             return
         
         # ወደ ጋሪ መጨመር
-        from handlers.orders import add_to_cart
+        from handlers.products import add_to_cart
         add_to_cart(user_id, product_id, quantity, db)
         
         bot.answer_callback_query(

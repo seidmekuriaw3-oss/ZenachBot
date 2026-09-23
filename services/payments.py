@@ -57,6 +57,7 @@ class PaymentService:
                         order_id, user_id, amount, currency, method,
                         transaction_id, status, created_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    RETURNING id
                 ''', (
                     payment_data['order_id'],
                     payment_data['user_id'],
@@ -67,7 +68,7 @@ class PaymentService:
                     payment_data['status']
                 ))
                 
-                payment_id = cursor.lastrowid
+                payment_id = cursor.fetchone()['id']
                 payment_data['id'] = payment_id
                 
                 # የትዕዛዝ ክፍያ ሁኔታ ማዘመን
@@ -264,7 +265,11 @@ class PaymentService:
                 if data.get('status') == 'success':
                     payment_data = data.get('data', {})
                     
-                    if payment_data.get('status') == 'success':
+                    amount_matches = str(payment_data.get('amount')) == str(payment['amount'])
+                    currency_matches = payment_data.get('currency', payment['currency']) == payment['currency']
+                    reference_matches = payment_data.get('tx_ref', payment['transaction_id']) == payment['transaction_id']
+
+                    if payment_data.get('status') == 'success' and amount_matches and currency_matches and reference_matches:
                         # ክፍያ ተረጋግጧል
                         self.update_payment_status(
                             payment['transaction_id'],
@@ -403,11 +408,8 @@ class PaymentService:
                 cursor = conn.cursor()
                 cursor.execute('''
                     UPDATE payments 
-                    SET provider_response = json_set(
-                        COALESCE(provider_response, '{}'),
-                        '$.receipt_file_id',
-                        ?
-                    )
+                    SET provider_response = COALESCE(provider_response, '{}'::jsonb)
+                        || jsonb_build_object('receipt_file_id', ?)
                     WHERE id = ?
                 ''', (receipt_file_id, payment_id))
             
@@ -478,13 +480,15 @@ def handle_chapa_webhook(request_data: Dict, payment_service: PaymentService) ->
             return {'status': 'error', 'message': 'No signature provided'}, 400
         
         # የፊርማ ማረጋገጫ
+        payload = request_data.get('data', {})
+        signed_data = json.dumps(payload, sort_keys=True, separators=(',', ':'))
         expected = hmac.new(
             config.payment.CHAPA_SECRET_KEY.encode(),
-            request_data.get('data', '').encode(),
+            signed_data.encode(),
             hashlib.sha256
         ).hexdigest()
         
-        if signature != expected:
+        if not hmac.compare_digest(signature, expected):
             return {'status': 'error', 'message': 'Invalid signature'}, 401
         
         # የክፍያ መረጃ

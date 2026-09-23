@@ -16,12 +16,19 @@ from telebot.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from database import Database
 from utils.helpers import get_text, get_user_lang
 from keyboards.reply import get_main_menu, get_admin_menu
-from handlers.products import show_products_by_category
-from handlers.user import show_user_profile
-from handlers.orders import show_user_orders, show_cart
-from services.notifications import toggle_subscription
 
 logger = logging.getLogger(__name__)
+
+
+def toggle_subscription(message: Message, db: Database, bot: TeleBot, subscribe: bool):
+    """Update the user's notification subscription from the reply keyboard."""
+    user_id = message.from_user.id
+    status = 1 if subscribe else 0
+    db.update_user(user_id, is_subscribed=status)
+    db.log_activity(user_id, 'toggle_subscription', f'አዲስ ሁኔታ: {status}')
+    lang = get_user_lang(db, user_id)
+    key = 'subscribed' if subscribe else 'unsubscribed'
+    bot.send_message(message.chat.id, f"✅ {get_text(lang, 'subscription')}: {get_text(lang, key)}")
 
 
 def register(bot: TeleBot, db: Database):
@@ -35,6 +42,15 @@ def register(bot: TeleBot, db: Database):
         user_id = message.from_user.id
         text = message.text
         lang = get_user_lang(db, user_id)
+
+        if not db.get_user(user_id):
+            db.create_user(
+                user_id=user_id,
+                username=message.from_user.username,
+                first_name=message.from_user.first_name,
+                last_name=message.from_user.last_name,
+                lang='am'
+            )
         
         # የተጠቃሚ እንቅስቃሴ መመዝገብ
         db.log_activity(user_id, 'message', f'ተጠቃሚ: {text[:50]}')
@@ -47,25 +63,30 @@ def register(bot: TeleBot, db: Database):
         
         # የምርት ምድቦች
         if text in ['👕 የወንድ ልብሶች', '👕 Men\'s Clothing', 'የወንድ ልብሶች 👕', 'Men\'s Clothing 👕']:
-            show_products_by_category(message, 'Men', db, bot)
+            from handlers import messages as message_handlers
+            message_handlers.show_products_by_category(message, 'Men', db, bot)
             return
         
         if text in ['👗 የሴት ልብሶች', '👗 Women\'s Clothing', 'የሴት ልብሶች 👗', 'Women\'s Clothing 👗']:
-            show_products_by_category(message, 'Women', db, bot)
+            from handlers import messages as message_handlers
+            message_handlers.show_products_by_category(message, 'Women', db, bot)
             return
         
         # ትዕዛዞች
         if text in ['📋 ትዕዛዞቼ', '📋 My Orders', 'ትዕዛዞቼ 📋', 'My Orders 📋']:
+            from handlers.orders import show_user_orders
             show_user_orders(message, db, bot)
             return
         
         # ጋሪ
         if text in ['🛒 ጋሪ', '🛒 Cart', 'ጋሪ 🛒', 'Cart 🛒']:
+            from handlers.orders import show_cart
             show_cart(message, db, bot)
             return
         
         # መገለጫ
         if text in ['👤 መገለጫ', '👤 Profile', 'መገለጫ 👤', 'Profile 👤']:
+            from handlers.user import show_user_profile
             show_user_profile(message, db, bot)
             return
         

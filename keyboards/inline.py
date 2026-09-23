@@ -38,6 +38,11 @@ def get_main_keyboard(lang: str = 'am') -> InlineKeyboardMarkup:
     return markup
 
 
+def get_start_keyboard(lang: str = 'am') -> InlineKeyboardMarkup:
+    """የመጀመሪያ ማስተዋወቂያ ኪቦርድ መፍጠር"""
+    return get_main_keyboard(lang)
+
+
 def get_back_keyboard(callback_data: str = "main_menu", lang: str = 'am') -> InlineKeyboardMarkup:
     """የመመለሻ ኪቦርድ መፍጠር"""
     markup = InlineKeyboardMarkup()

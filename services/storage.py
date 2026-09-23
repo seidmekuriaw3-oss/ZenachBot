@@ -13,6 +13,8 @@ from datetime import datetime
 from typing import Optional, Dict, Any, List, BinaryIO
 import hashlib
 import base64
+import uuid
+import subprocess
 
 from config import config
 from utils.logger import get_logger
@@ -69,8 +71,8 @@ class StorageService:
             
             # ፋይል ስም ማፍጠር
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            name, ext = os.path.splitext(filename)
-            safe_name = f"{name}_{timestamp}{ext}"
+            name, ext = os.path.splitext(Path(filename).name)
+            safe_name = f"{name}_{timestamp}_{uuid.uuid4().hex[:8]}{ext}"
             file_path = save_dir / safe_name
             
             # ፋይል ማስቀመጥ
@@ -289,26 +291,24 @@ class StorageService:
             if not name:
                 name = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
             
-            # የውሂብ ጎታ ፋይል
-            db_path = self.base_dir / config.database.DB_PATH
-            
-            if not db_path.exists():
-                logger.error("❌ የውሂብ ጎታ ፋይል አልተገኘም")
-                return None
-            
             # ምትኬ ማውጫ
             backup_dir = self.backups_dir / name
             backup_dir.mkdir(parents=True, exist_ok=True)
             
-            # የውሂብ ጎታ መቅዳት
-            backup_db = backup_dir / 'zenach.db'
-            shutil.copy2(str(db_path), str(backup_db))
+            # PostgreSQL ምትኬ ማውጣት
+            backup_db = backup_dir / 'zenach.sql'
+            subprocess.run(
+                ['pg_dump', config.database.DB_URL, '--file', str(backup_db)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
             
             # ምትኬ መረጃ መፍጠር
             backup_info = {
                 'name': name,
                 'created_at': datetime.now().isoformat(),
-                'db_size': db_path.stat().st_size,
+                'db_size': backup_db.stat().st_size,
                 'files': []
             }
             
@@ -342,11 +342,15 @@ class StorageService:
                 logger.error(f"❌ ምትኬ አልተገኘም: {backup_path}")
                 return False
             
-            # የውሂብ ጎታ መመለስ
-            backup_db = full_path / 'zenach.db'
+            # PostgreSQL ውሂብ ጎታ መመለስ
+            backup_db = full_path / 'zenach.sql'
             if backup_db.exists():
-                db_path = self.base_dir / config.database.DB_PATH
-                shutil.copy2(str(backup_db), str(db_path))
+                subprocess.run(
+                    ['psql', config.database.DB_URL, '--file', str(backup_db)],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
             
             # ሌሎች ፋይሎች መመለስ
             for dir_name in ['assets', 'cache', 'logs']:

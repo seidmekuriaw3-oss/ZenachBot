@@ -47,6 +47,12 @@ def register(bot: TeleBot, db: Database):
     
     # የክፍያ አገልግሎት መፍጠር
     payment_service = PaymentService(db)
+
+    def get_owned_payment(payment_id: int, user_id: int) -> Optional[Dict]:
+        payment = payment_service.get_payment(payment_id)
+        if not payment or int(payment.get('user_id', -1)) != user_id:
+            return None
+        return payment
     
     # ==================== የክፍያ ምርጫ ====================
     
@@ -73,7 +79,7 @@ def register(bot: TeleBot, db: Database):
         payment = payment_service.create_payment(
             user_id=user_id,
             order_id=order_data.get('order_id'),
-            amount=order_data.get('total'),
+            amount=order_data.get('final'),
             method=method,
             currency='ETB'
         )
@@ -327,7 +333,15 @@ def register(bot: TeleBot, db: Database):
         user_id = call.from_user.id
         lang = get_user_lang(db, user_id)
         
-        payment_id = int(call.data.replace('verify_payment_', ''))
+        try:
+            payment_id = int(call.data.replace('verify_payment_', ''))
+        except ValueError:
+            bot.answer_callback_query(call.id, "❌ Invalid payment")
+            return
+
+        if not get_owned_payment(payment_id, user_id):
+            bot.answer_callback_query(call.id, "❌ Payment not found")
+            return
         
         # ክፍያ ማረጋገጥ
         payment = payment_service.verify_payment(payment_id)
@@ -384,7 +398,15 @@ def register(bot: TeleBot, db: Database):
         user_id = call.from_user.id
         lang = get_user_lang(db, user_id)
         
-        payment_id = int(call.data.replace('cancel_payment_', ''))
+        try:
+            payment_id = int(call.data.replace('cancel_payment_', ''))
+        except ValueError:
+            bot.answer_callback_query(call.id, "❌ Invalid payment")
+            return
+
+        if not get_owned_payment(payment_id, user_id):
+            bot.answer_callback_query(call.id, "❌ Payment not found")
+            return
         
         # ክፍያ መሰረዝ
         payment_service.cancel_payment(payment_id)
@@ -413,7 +435,15 @@ def register(bot: TeleBot, db: Database):
         user_id = call.from_user.id
         lang = get_user_lang(db, user_id)
         
-        payment_id = int(call.data.replace('confirm_bank_payment_', ''))
+        try:
+            payment_id = int(call.data.replace('confirm_bank_payment_', ''))
+        except ValueError:
+            bot.answer_callback_query(call.id, "❌ Invalid payment")
+            return
+
+        if not get_owned_payment(payment_id, user_id):
+            bot.answer_callback_query(call.id, "❌ Payment not found")
+            return
         
         msg = bot.send_message(
             call.message.chat.id,
@@ -427,6 +457,10 @@ def register(bot: TeleBot, db: Database):
         """የደረሰኝ ፋይል ማስኬድ"""
         user_id = message.from_user.id
         lang = get_user_lang(db, user_id)
+
+        if not get_owned_payment(payment_id, user_id):
+            bot.send_message(message.chat.id, "❌ " + get_text(lang, 'payment_not_found'))
+            return
         
         if message.content_type != 'photo':
             bot.send_message(
@@ -486,6 +520,7 @@ def register(bot: TeleBot, db: Database):
         total = sum(item['price'] * item['quantity'] for item in items)
         
         return {
+            'order_id': cart.get('order_id'),
             'items': items,
             'total': total,
             'discount': cart.get('discount_amount', 0),

@@ -1,1 +1,25 @@
-{}
+{
+	"welcome": "Welcome to Zenach Boutique!",
+	"welcome_msg": "Choose a product from the buttons below.",
+	"men": "👕 Men's Clothing",
+	"women": "👗 Women's Clothing",
+	"contact": "📍 Address & Phone",
+	"orders": "📋 My Orders",
+	"profile": "👤 Profile",
+	"cart": "🛒 Cart",
+	"subscribe": "📢 Subscribe",
+	"unsubscribe": "🔕 Unsubscribe",
+	"admin": "⚙️ Admin",
+	"back": "🔙 Main Menu",
+	"greeting": "Hello! Welcome.",
+	"thank_you_response": "Thank you!",
+	"bye_response": "Goodbye!",
+	"contact_info": "📍 Address and phone information",
+	"no_products_in_category": "No products found in this category.",
+	"product_not_found": "Product not found.",
+	"no_more_products": "No more products.",
+	"out_of_stock": "This product is out of stock.",
+	"not_enough_stock": "Not enough stock. Remaining: {}",
+	"added_to_cart": "{} x{} added to your cart.",
+	"error": "An error occurred."
+}

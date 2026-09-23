@@ -26,7 +26,14 @@ def notify_admin(bot: TeleBot, message: str, parse_mode: str = 'Markdown'):
         try:
             bot.send_message(admin_id, message, parse_mode=parse_mode)
         except Exception as e:
-            logger.error(f"ለአስተዳዳሪ {admin_id} መልዕክት መላክ አልተቻለም: {e}")
+            if parse_mode and 'can\'t parse entities' in str(e).lower():
+                try:
+                    bot.send_message(admin_id, message, parse_mode=None)
+                    logger.warning(f"ለአስተዳዳሪ {admin_id} መልዕክት plain text ሆኖ ተልኳል")
+                    continue
+                except Exception as fallback_error:
+                    e = fallback_error
+            logger.warning(f"ለአስተዳዳሪ {admin_id} መልዕክት መላክ አልተቻለም: {e}")
 
 
 def notify_admins(bot: TeleBot, message: str, parse_mode: str = 'Markdown'):

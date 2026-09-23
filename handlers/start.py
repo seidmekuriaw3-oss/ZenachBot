@@ -177,14 +177,13 @@ def register(bot: TeleBot, db: Database):
         bot.send_message(
             chat_id,
             msg,
-            reply_markup=markup,
-            parse_mode='Markdown'
+            reply_markup=markup
         )
     
     # ==================== መጀመሪያ ላይ ማሳወቅ ====================
     
     # ቦቱ ሲጀመር ለአስተዳዳሪዎች ማሳወቅ
-    @bot.message_handler(commands=['start'], func=lambda m: m.from_user.id in db.get_admin_ids())
+    @bot.message_handler(commands=['start'], func=lambda m: m.from_user.id in config.bot.ADMIN_IDS)
     def admin_start_notification(message: Message):
         """አስተዳዳሪ ሲጀምር ማሳወቅ"""
         user_id = message.from_user.id

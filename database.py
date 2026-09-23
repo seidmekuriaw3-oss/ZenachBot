@@ -5,14 +5,12 @@
 ይህ ፋይል ሁሉንም የውሂብ ጎታ ግንኙነቶችን እና ስራዎችን ይይዛል
 """
 
-import sqlite3
+import re
 import json
-import os
 import time
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Tuple, Union
 from contextlib import contextmanager
-from pathlib import Path
 import threading
 import logging
 
@@ -22,54 +20,145 @@ from utils.logger import get_logger
 logger = get_logger('database')
 
 
+def _decode_json(value):
+    if isinstance(value, str):
+        return json.loads(value)
+    return value
+
+
+class _CursorProxy:
+    def __init__(self, cursor, database):
+        self._cursor = cursor
+        self._database = database
+
+    def execute(self, query, params=()):
+        query, params = self._database.prepare_query(query, params)
+        self._cursor.execute(query, params)
+        return self
+
+    def executemany(self, query, params):
+        query, _ = self._database.prepare_query(query, ())
+        self._cursor.executemany(query, params)
+        return self
+
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
+
+
+class _ConnectionProxy:
+    def __init__(self, connection, database):
+        self._connection = connection
+        self._database = database
+
+    def cursor(self):
+        return _CursorProxy(self._connection.cursor(), self._database)
+
+    def execute(self, query, params=()):
+        cursor = self.cursor()
+        return cursor.execute(query, params)
+
+    def __getattr__(self, name):
+        return getattr(self._connection, name)
+
+
 class Database:
     """የውሂብ ጎታ ክፍል - ሁሉንም የውሂብ ጎታ ስራዎች ያከናውናል"""
     
-    def __init__(self, db_path: Optional[str] = None):
-        self.db_path = db_path or config.database.DB_PATH
+    def __init__(self):
+        self.db_url = config.database.DB_URL
+        if not self.db_url.startswith(('postgresql://', 'postgres://')):
+            raise ValueError('DATABASE_URL must be a PostgreSQL connection URL')
         self._local = threading.local()
         self._lock = threading.RLock()
-        
-        # ማውጫውን መፍጠር
-        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        
+
         # የውሂብ ጎታ ሰንጠረዦችን መፍጠር
         self.init_database()
-        logger.info(f"✅ የውሂብ ጎታ ተዘጋጅቷል: {self.db_path}")
+        logger.info("✅ PostgreSQL የውሂብ ጎታ ተዘጋጅቷል")
     
     @contextmanager
     def get_connection(self):
         """የውሂብ ጎታ ግንኙነት መፍጠር"""
-        conn = sqlite3.connect(
-            self.db_path,
-            timeout=config.database.DB_TIMEOUT,
-            check_same_thread=False
-        )
-        conn.row_factory = sqlite3.Row
-        
-        # የውጭ ቁልፎችን ማንቃት
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA synchronous = NORMAL")
+        conn = getattr(self._local, 'connection', None)
+        if conn is None:
+            try:
+                import psycopg2
+                from psycopg2.extras import DictCursor
+            except ImportError as error:
+                raise RuntimeError('psycopg2-binary is required for PostgreSQL') from error
+            conn = psycopg2.connect(
+                self.db_url,
+                connect_timeout=config.database.DB_TIMEOUT,
+                cursor_factory=DictCursor
+            )
+            self._local.connection = conn
         
         try:
-            yield conn
+            yield _ConnectionProxy(conn, self)
             conn.commit()
         except Exception as e:
             conn.rollback()
             logger.error(f"❌ የውሂብ ጎታ ስህተት: {e}")
             raise
         finally:
-            conn.close()
+            # Keep the thread-local connection alive because execute() returns
+            # cursors that callers consume after this context exits.
+            pass
+
+    def prepare_query(self, query: str, params: tuple = ()):
+        """Translate legacy query placeholders and schema syntax to PostgreSQL."""
+        query = query.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "BIGSERIAL PRIMARY KEY")
+        query = query.replace(" JSON", " JSONB")
+        query = re.sub(r'\b(user_id|referred_by|admin_id) INTEGER\b', r'\1 BIGINT', query)
+        query = query.replace("datetime('now', ?)", "CURRENT_TIMESTAMP + %s::interval")
+        query = re.sub(
+            r'GROUP_CONCAT\(([^)]+)\)',
+            r"STRING_AGG(\1::text, ',')",
+            query,
+            flags=re.IGNORECASE,
+        )
+        query = query.replace(
+            "INSERT OR REPLACE INTO users",
+            "INSERT INTO users"
+        )
+        if query.lstrip().startswith("INSERT INTO users"):
+            query = query.rstrip() + (
+                " ON CONFLICT (user_id) DO UPDATE SET "
+                "username = EXCLUDED.username, first_name = EXCLUDED.first_name, "
+                "last_name = EXCLUDED.last_name, phone = EXCLUDED.phone, "
+                "email = EXCLUDED.email, lang = EXCLUDED.lang, "
+                "referral_code = EXCLUDED.referral_code"
+            )
+        query = query.replace(
+            "INSERT OR REPLACE INTO carts",
+            "INSERT INTO carts"
+        )
+        if query.lstrip().startswith("INSERT INTO carts"):
+            query = query.rstrip() + (
+                " ON CONFLICT (user_id) DO UPDATE SET items = EXCLUDED.items, "
+                "total_amount = EXCLUDED.total_amount, discount_amount = EXCLUDED.discount_amount, "
+                "final_amount = EXCLUDED.final_amount, discount_code = EXCLUDED.discount_code"
+            )
+        query = query.replace(
+            "INSERT OR REPLACE INTO reviews",
+            "INSERT INTO reviews"
+        )
+        if query.lstrip().startswith("INSERT INTO reviews"):
+            query = query.rstrip() + (
+                " ON CONFLICT (user_id, product_id) DO UPDATE SET "
+                "rating = EXCLUDED.rating, comment = EXCLUDED.comment, "
+                "images = EXCLUDED.images"
+            )
+        query = query.replace('?', '%s')
+        return query, params
     
-    def execute(self, query: str, params: tuple = ()) -> sqlite3.Cursor:
+    def execute(self, query: str, params: tuple = ()):
         """የSQL ጥያቄ መፈጸም"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(query, params)
             return cursor
     
-    def executemany(self, query: str, params: List[tuple]) -> sqlite3.Cursor:
+    def executemany(self, query: str, params: List[tuple]):
         """ብዙ SQL ጥያቄዎችን መፈጸም"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -378,19 +467,67 @@ class Database:
             
             for index in indexes:
                 cursor.execute(index)
+
+            self._migrate_postgres_ids(cursor)
             
             logger.info("✅ ሁሉም የውሂብ ጎታ ሰንጠረዦች ተፈጥረዋል")
+
+    def _migrate_postgres_ids(self, cursor):
+        """Use BIGINT for Telegram IDs and preserve their foreign keys."""
+        constraints = (
+            ('users', 'users_referred_by_fkey'),
+            ('orders', 'orders_user_id_fkey'),
+            ('reviews', 'reviews_user_id_fkey'),
+            ('discount_usage', 'discount_usage_user_id_fkey'),
+            ('carts', 'carts_user_id_fkey'),
+            ('activity_logs', 'activity_logs_user_id_fkey'),
+            ('payments', 'payments_user_id_fkey'),
+            ('product_views', 'product_views_user_id_fkey'),
+            ('wishlists', 'wishlists_user_id_fkey'),
+            ('admin_notes', 'admin_notes_admin_id_fkey'),
+        )
+        for table, constraint in constraints:
+            cursor.execute(f'ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {constraint}')
+
+        for table, column in (
+            ('users', 'user_id'), ('users', 'referred_by'),
+            ('orders', 'user_id'), ('reviews', 'user_id'),
+            ('discount_usage', 'user_id'), ('carts', 'user_id'),
+            ('activity_logs', 'user_id'), ('payments', 'user_id'),
+            ('product_views', 'user_id'), ('wishlists', 'user_id'),
+            ('admin_notes', 'admin_id'),
+        ):
+            cursor.execute(f'ALTER TABLE {table} ALTER COLUMN {column} TYPE BIGINT')
+
+        for statement in (
+            'ALTER TABLE users ADD CONSTRAINT users_referred_by_fkey FOREIGN KEY (referred_by) REFERENCES users(user_id)',
+            'ALTER TABLE orders ADD CONSTRAINT orders_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(user_id)',
+            'ALTER TABLE reviews ADD CONSTRAINT reviews_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(user_id)',
+            'ALTER TABLE discount_usage ADD CONSTRAINT discount_usage_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(user_id)',
+            'ALTER TABLE carts ADD CONSTRAINT carts_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(user_id)',
+            'ALTER TABLE activity_logs ADD CONSTRAINT activity_logs_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(user_id)',
+            'ALTER TABLE payments ADD CONSTRAINT payments_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(user_id)',
+            'ALTER TABLE product_views ADD CONSTRAINT product_views_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(user_id)',
+            'ALTER TABLE wishlists ADD CONSTRAINT wishlists_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(user_id)',
+            'ALTER TABLE admin_notes ADD CONSTRAINT admin_notes_admin_id_fkey FOREIGN KEY (admin_id) REFERENCES users(user_id)',
+        ):
+            cursor.execute(statement)
     
     # ==================== ማጣቀሻ ሰንጠረዦች ====================
     
     def get_table_names(self) -> List[str]:
         """ሁሉንም የሰንጠረዥ ስሞች መመለስ"""
-        cursor = self.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        cursor = self.execute("SELECT tablename AS name FROM pg_catalog.pg_tables WHERE schemaname = 'public'")
         return [row[0] for row in cursor.fetchall()]
     
     def get_table_info(self, table_name: str) -> List[Dict]:
         """የሰንጠረዥ መረጃ ማግኘት"""
-        cursor = self.execute(f"PRAGMA table_info({table_name})")
+        cursor = self.execute(
+            "SELECT column_name AS name, ordinal_position AS cid, data_type AS type "
+            "FROM information_schema.columns WHERE table_schema = 'public' AND table_name = ? "
+            "ORDER BY ordinal_position",
+            (table_name,)
+        )
         return [dict(row) for row in cursor.fetchall()]
     
     def get_table_size(self, table_name: str) -> int:
@@ -403,7 +540,8 @@ class Database:
     def get_db_size(self) -> int:
         """የውሂብ ጎታ መጠን በባይት ማግኘት"""
         try:
-            return os.path.getsize(self.db_path)
+            cursor = self.execute("SELECT pg_database_size(current_database())")
+            return cursor.fetchone()[0]
         except:
             return 0
     
@@ -432,8 +570,10 @@ class Database:
     
     def close(self):
         """የውሂብ ጎታ ግንኙነቶችን መዝጋት"""
-        # SQLite ግንኙነቶች በራሳቸው ይዘጋሉ
-        pass
+        conn = getattr(self._local, 'connection', None)
+        if conn is not None:
+            conn.close()
+            self._local.connection = None
 
 
 # ለወደፊት መጠቀሚያ: የውሂብ ጎታ ክፍል ተጨማሪ ተግባራት
@@ -442,6 +582,10 @@ class DatabaseMixin:
     """ለተጨማሪ የውሂብ ጎታ ተግባራት ማህበር"""
     
     # ==================== የተጠቃሚ ስራዎች ====================
+
+    def get_admin_ids(self) -> List[int]:
+        """Return administrator Telegram IDs configured for this application."""
+        return list(config.bot.ADMIN_IDS)
     
     def create_user(self, user_id: int, username: str = None, first_name: str = None,
                    last_name: str = None, phone: str = None, email: str = None,
@@ -577,6 +721,7 @@ class DatabaseMixin:
                         image_id, images, stock_quantity, is_featured,
                         is_on_sale, discount_percent
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    RETURNING id
                 ''', (
                     data.get('name_am'), data.get('name_en'),
                     data.get('description_am'), data.get('description_en'),
@@ -588,7 +733,7 @@ class DatabaseMixin:
                     data.get('is_on_sale', 0),
                     data.get('discount_percent', 0)
                 ))
-                return cursor.lastrowid
+                return cursor.fetchone()['id']
         except Exception as e:
             logger.error(f"❌ ምርት መፍጠር አልተቻለም: {e}")
             return None
@@ -604,7 +749,7 @@ class DatabaseMixin:
             if row:
                 product = dict(row)
                 if product.get('images'):
-                    product['images'] = json.loads(product['images'])
+                    product['images'] = _decode_json(product['images'])
                 return product
             return None
         except Exception as e:
@@ -757,6 +902,7 @@ class DatabaseMixin:
                         status, payment_method, shipping_address,
                         shipping_city, shipping_phone, shipping_name, notes
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    RETURNING id
                 ''', (
                     data.get('order_number'),
                     data.get('user_id'),
@@ -774,7 +920,7 @@ class DatabaseMixin:
                     data.get('shipping_name'),
                     data.get('notes')
                 ))
-                return cursor.lastrowid
+                return cursor.fetchone()['id']
         except Exception as e:
             logger.error(f"❌ ትዕዛዝ መፍጠር አልተቻለም: {e}")
             return None
@@ -897,7 +1043,7 @@ class DatabaseMixin:
             if row:
                 cart = dict(row)
                 if cart.get('items'):
-                    cart['items'] = json.loads(cart['items'])
+                    cart['items'] = _decode_json(cart['items'])
                 return cart
             return None
         except Exception as e:
@@ -953,6 +1099,7 @@ class DatabaseMixin:
                         min_order_amount, max_discount_amount,
                         valid_from, valid_to, usage_limit, user_limit
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    RETURNING id
                 ''', (
                     data.get('code').upper(),
                     data.get('discount_percent'),
@@ -965,7 +1112,7 @@ class DatabaseMixin:
                     data.get('usage_limit', 0),
                     data.get('user_limit', 0)
                 ))
-                return cursor.lastrowid
+                return cursor.fetchone()['id']
         except Exception as e:
             logger.error(f"❌ ቅናሽ መፍጠር አልተቻለም: {e}")
             return None
@@ -1233,16 +1380,13 @@ class Database(Database, DatabaseMixin):
     pass
 
 
-# አለምአቀፍ ውሂብ ጎታ ነገር
-db = Database()
-
-
 # ለሙከራ
 if __name__ == '__main__':
     print("=" * 50)
     print("📊 የውሂብ ጎታ መረጃ")
     print("=" * 50)
     
+    db = Database()
     stats = db.get_db_stats()
     print(f"\n📁 የውሂብ ጎታ መጠን: {stats['total_size'] / 1024:.2f} KB")
     print(f"📊 ጠቅላላ ረድፎች: {stats['total_rows']}")

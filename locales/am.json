@@ -1,1 +1,25 @@
-{}
+{
+	"welcome": "እንኳን ወደ ዘናጭ ቡቲክ በሰላም መጡ!",
+	"welcome_msg": "የሚፈልጉትን ምርት ከታች ካሉት አዝራሮች ይምረጡ።",
+	"men": "👕 የወንድ ልብሶች",
+	"women": "👗 የሴት ልብሶች",
+	"contact": "📍 አድራሻ እና ስልክ",
+	"orders": "📋 ትዕዛዞቼ",
+	"profile": "👤 መገለጫ",
+	"cart": "🛒 ጋሪ",
+	"subscribe": "📢 ለማስታወቂያ ተመዝገብ",
+	"unsubscribe": "🔕 ከማስታወቂያ ውጣ",
+	"admin": "⚙️ አስተዳደር",
+	"back": "🔙 ወደ መጀመሪያ",
+	"greeting": "ሰላም! እንኳን ደህና መጡ።",
+	"thank_you_response": "እናመሰግናለን!",
+	"bye_response": "ደህና ይሁኑ!",
+	"contact_info": "📍 አድራሻ እና ስልክ መረጃ",
+	"no_products_in_category": "በዚህ ምድብ ምርት አልተገኘም።",
+	"product_not_found": "ምርቱ አልተገኘም።",
+	"no_more_products": "ተጨማሪ ምርት የለም።",
+	"out_of_stock": "ይህ ምርት ከክምችት ውጭ ነው።",
+	"not_enough_stock": "በቂ ክምችት የለም። የቀረው: {}",
+	"added_to_cart": "{} ምርት {} በጋሪ ተጨምሯል።",
+	"error": "ስህተት ተከስቷል።"
+}

@@ -20,8 +20,30 @@ from services.notifications import notify_admins
 
 logger = logging.getLogger(__name__)
 
+add_to_cart = None
+
 # ለምርት ጊዜያዊ መረጃ
 product_cache = {}
+
+
+def search_products(message: Message, query: str, db: Database, bot: TeleBot):
+    """Search products for calls originating from the general text handler."""
+    user_id = message.from_user.id
+    lang = get_user_lang(db, user_id)
+    products = db.search_products(query, limit=20)
+
+    if not products:
+        bot.send_message(message.chat.id, f"🔍 ለ '{query}' ምንም ምርት አልተገኘም")
+        return []
+
+    lines = [f"🔍 *የፍለጋ ውጤቶች ለ '{query}'*", '']
+    for product in products[:10]:
+        name = product['name_am'] if lang == 'am' else product['name_en']
+        lines.append(f"• {name} - {format_currency(product['price'])} ETB")
+        lines.append(f"  /product {product['id']}")
+
+    bot.send_message(message.chat.id, '\n'.join(lines), parse_mode='Markdown')
+    return products
 
 
 def register(bot: TeleBot, db: Database):
@@ -503,6 +525,8 @@ def register(bot: TeleBot, db: Database):
         
         # ጋሪ ማዘመን
         return db.update_cart(user_id, items)
+
+    globals()['add_to_cart'] = add_to_cart
     
     # ==================== የምርት ፍለጋ ====================
     
